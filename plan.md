@@ -107,15 +107,22 @@ garp is a high-performance, pure-Go document search tool with a TUI interface. A
 
 **Changes**:
 ```go
-// Add package-level cache
+// Add package-level cache with bounded size
 var regexCache sync.Map // map[string]*regexp.Regexp
+var regexCacheSize atomic.Int64
+const maxRegexCacheEntries = 1000
 
 func getCachedRegex(pattern string) *regexp.Regexp {
     if re, ok := regexCache.Load(pattern); ok {
         return re.(*regexp.Regexp)
     }
     re := regexp.MustCompile(pattern)
-    regexCache.Store(pattern, re)
+    
+    // Bound cache size to prevent memory leaks
+    if regexCacheSize.Load() < maxRegexCacheEntries {
+        regexCache.Store(pattern, re)
+        regexCacheSize.Add(1)
+    }
     return re
 }
 ```
@@ -248,16 +255,21 @@ func getCachedRegex(pattern string) *regexp.Regexp {
 5. **I/O**: Read bandwidth, IOPS, cache hit rate
 
 ### Baseline vs. Optimized
+
+**Note**: Baseline values should be measured on a reference system (e.g., 8-core CPU, 16GB RAM, SSD) using the standard test corpus before optimization work begins. These are estimated targets based on code analysis:
+
 ```
-Metric                  Baseline    Target      Stretch
-----------------------------------------------------------
-Files/sec (text)        500         750         1000
-Files/sec (binary)      50          100         150
-Time to first result    2s          0.5s        0.1s
-Peak memory (10K files) 500MB       300MB       200MB
-CPU efficiency          60%         80%         90%
-Cache hit rate          0%          40%         60%
+Metric                  Baseline    Target      Stretch    Measurement Method
+--------------------------------------------------------------------------------
+Files/sec (text)        ~500        750         1000       `time garp term --code` on 10K files
+Files/sec (binary)      ~50         100         150        `time garp term` on 1K PDFs/docs
+Time to first result    ~2s         0.5s        0.1s       Measured from invocation to first hit
+Peak memory (10K files) ~500MB      300MB       200MB      `/usr/bin/time -v` or `pprof`
+CPU efficiency          ~60%        80%         90%        CPU time / (wall time × cores)
+Cache hit rate          0%          40%         60%        Instrumented cache metrics
 ```
+
+**Actual baselines must be established** via benchmarking before claiming specific improvements.
 
 ## Testing Strategy
 
@@ -417,9 +429,17 @@ Ensure optimizations don't break:
 
 This plan provides a comprehensive roadmap for enhancing garp's performance and features while maintaining its core strengths: pure Go, zero dependencies, and excellent UX. The phased approach allows for incremental delivery of value, with quick wins in Phase 1 and strategic improvements in later phases.
 
-**Estimated Total Effort**: 10-15 days of focused development + 3-5 days of testing and documentation
+**Estimated Total Effort**: 
 
-**Expected Overall Impact**: 2-3x performance improvement, significantly enhanced user experience, and a solid foundation for future growth.
+- **Phase 1 (Quick Wins)**: 2-3 days development + 1 day testing = **3-4 days**
+- **Phase 2 (Architecture)**: 4-6 days development + 2 days testing/integration = **6-8 days**  
+- **Phase 3 (Advanced)**: 6-8 days development + 2-3 days testing = **8-11 days**
+- **Documentation & Polish**: 2-3 days across all phases
+- **Total**: **19-26 days** of focused development (add 20-30% contingency for integration challenges)
+
+**Realistic Schedule**: 4-5 weeks with one developer, or 2-3 weeks with two developers working in parallel.
+
+**Expected Overall Impact**: 2-3x performance improvement on typical workloads, 100x+ with indexing, significantly enhanced user experience, and a solid foundation for future growth.
 
 ---
 
